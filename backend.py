@@ -5,24 +5,17 @@ import numpy as np
 import base64
 from werkzeug.security import generate_password_hash, check_password_hash
 from ultralytics import YOLO
-import firebase_admin
-from firebase_admin import credentials, firestore
 import os
 from datetime import datetime
+from supabase import create_client, Client
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
-CREDENTIALS_FILE = 'firebase_credentials.json'
-
-if os.path.exists(CREDENTIALS_FILE):
-    cred = credentials.Certificate(CREDENTIALS_FILE)
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ connected to Firebase Firestore")
-else:
-    print(f"⚠️ Warning: '{CREDENTIALS_FILE}' not found! Database APIs will fail. Please add your credentials file.")
-    db = None
+# Supabase Credentials
+SUPABASE_URL = "https://eaztqygthkxwvgdspmnw.supabase.co"
+SUPABASE_KEY = "sb_publishable_FVWqoGatXU7yPkHXRdGBYg_-LV-VCi-"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def encode_image(img):
     _, buffer = cv2.imencode('.jpg', img)
@@ -32,7 +25,6 @@ def encode_image(img):
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
     email = data.get('email')
     password = data.get('password')
@@ -40,74 +32,81 @@ def signup():
         return jsonify({"error": "Missing credentials"}), 400
     
     # Check if email exists
-    users_ref = db.collection('users').where('email', '==', email).get()
-    if users_ref:
-        return jsonify({"error": "Email already exists"}), 400
+    try:
+        res = supabase.table('users').select('*').eq('email', email).execute()
+        if len(res.data) > 0:
+            return jsonify({"error": "Email already exists"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
     hashed_password = generate_password_hash(password)
-    new_user_ref = db.collection('users').document()
-    new_user_ref.set({
-        "email": email,
-        "password": hashed_password,
-        "created_at": datetime.now()
-    })
-    return jsonify({"success": True, "message": "User created successfully"})
+    try:
+        supabase.table('users').insert({
+            "email": email,
+            "password": hashed_password
+        }).execute()
+        return jsonify({"success": True, "message": "User created successfully"})
+    except Exception as e:
+        return jsonify({"error": "Failed to create user", "details": str(e)}), 500
+
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
     email = data.get('email')
     password = data.get('password')
     
-    users_ref = db.collection('users').where('email', '==', email).limit(1).get()
-    if not users_ref:
-        return jsonify({"error": "Invalid email or password"}), 401
-    
-    user = users_ref[0].to_dict()
-    user_id = users_ref[0].id
-    
-    if check_password_hash(user.get('password', ''), password):
-        return jsonify({"success": True, "user": {"id": user_id, "email": user['email']}})
-    else:
-        return jsonify({"error": "Invalid email or password"}), 401
+    try:
+        res = supabase.table('users').select('*').eq('email', email).limit(1).execute()
+        
+        if not res.data:
+            return jsonify({"error": "Invalid email or password"}), 401
+            
+        user = res.data[0]
+        
+        if check_password_hash(user.get('password', ''), password):
+            return jsonify({"success": True, "user": {"id": user['id'], "email": user['email']}})
+        else:
+            return jsonify({"error": "Invalid email or password"}), 401
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ── PLANTS / SECTIONS ─────────────────────────────────────────────────────────
 
 @app.route('/api/plants', methods=['GET'])
 def get_plants():
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    contractors = db.collection('contractor_data').get()
-    plants = list(set([doc.to_dict().get('plant_name') for doc in contractors if doc.to_dict().get('plant_name')]))
-    return jsonify(plants)
+    try:
+        res = supabase.table('contractor_data').select('plant_name').execute()
+        # Extract unique plant names
+        plants = list(set([doc['plant_name'] for doc in res.data if 'plant_name' in doc]))
+        return jsonify(plants)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/sections/<plant_name>', methods=['GET'])
 def get_sections(plant_name):
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    sections_ref = db.collection('contractor_data').where('plant_name', '==', plant_name).get()
-    sections = []
-    for doc in sections_ref:
-        s = doc.to_dict()
-        s['id'] = doc.id
-        sections.append(s)
-    return jsonify(sections)
+    try:
+        res = supabase.table('contractor_data').select('*').eq('plant_name', plant_name).execute()
+        return jsonify(res.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/contractor', methods=['POST'])
 def save_contractor():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
-    new_ref = db.collection('contractor_data').document()
-    new_ref.set({
-        "plant_name": data['plantName'],
-        "section": data['section'],
-        "material": data.get('material', ''),
-        "length": data['length'],
-        "width": data['width'],
-        "pit_depth": data['pitDepth'],
-        "density": data.get('density', 1600),
-        "created_at": datetime.now()
-    })
-    return jsonify({"success": True})
+    try:
+        supabase.table('contractor_data').insert({
+            "plant_name": data['plantName'],
+            "section": data['section'],
+            "material": data.get('material', ''),
+            "length": data['length'],
+            "width": data['width'],
+            "pit_depth": data['pitDepth'],
+            "density": data.get('density', 1600)
+        }).execute()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ── IMAGE PROCESSING ──────────────────────────────────────────────────────────
 
@@ -239,58 +238,47 @@ def detect_gate_material():
 
 @app.route('/api/user', methods=['POST'])
 def save_log():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
-    new_log_ref = db.collection('volume_logs').document()
-    new_log_ref.set({
-        "section_id": str(data['section_id']),
-        "volume": data['volume'],
-        "weight_ton": data['weight_ton'],
-        "frontal_area": data.get('frontal_area', 0),
-        "img_original": data.get('img_original', ''),
-        "img_grayscale": data.get('img_grayscale', ''),
-        "img_blur": data.get('img_blur', ''),
-        "img_mask": data.get('img_mask', ''),
-        "timestamp": datetime.now()
-    })
-    return jsonify({"success": True})
+    try:
+        supabase.table('volume_logs').insert({
+            "section_id": int(data['section_id']),
+            "volume": data['volume'],
+            "weight_ton": data['weight_ton'],
+            "frontal_area": data.get('frontal_area', 0),
+            "img_original": data.get('img_original', ''),
+            "img_grayscale": data.get('img_grayscale', ''),
+            "img_blur": data.get('img_blur', ''),
+            "img_mask": data.get('img_mask', '')
+        }).execute()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stats/<section_id>', methods=['GET'])
 def get_stats(section_id):
     """Summary list — no images (keeps response small)."""
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    
-    logs_ref = db.collection('volume_logs').where('section_id', '==', str(section_id))
-    # Order By requires an index in Firestore, might fail initially until user builds one.
-    # So we fetch and sort manually for now just to be safe.
-    docs = logs_ref.get()
-    
-    logs = []
-    for doc in docs:
-        d = doc.to_dict()
-        logs.append({
-            "id": doc.id,
-            "section_id": d.get('section_id'),
-            "volume": d.get('volume'),
-            "weight_ton": d.get('weight_ton'),
-            "frontal_area": d.get('frontal_area'),
-            "timestamp": d.get('timestamp')
-        })
-        
-    logs.sort(key=lambda x: str(x['timestamp']), reverse=True)
-    return jsonify(logs[:20])
+    try:
+        # We need to sort by timestamp DESC. Supabase provides .order()
+        res = supabase.table('volume_logs')\
+            .select('id, section_id, volume, weight_ton, frontal_area, timestamp')\
+            .eq('section_id', int(section_id))\
+            .order('timestamp', desc=True)\
+            .limit(20)\
+            .execute()
+        return jsonify(res.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/scan/<log_id>', methods=['GET'])
 def get_scan_detail(log_id):
     """Full detail including all preprocessing images for a past scan."""
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    doc = db.collection('volume_logs').document(log_id).get()
-    if not doc.exists:
-        return jsonify({"error": "Scan not found"}), 404
-        
-    data = doc.to_dict()
-    data['id'] = doc.id
-    return jsonify(data)
+    try:
+        res = supabase.table('volume_logs').select('*').eq('id', int(log_id)).execute()
+        if not res.data:
+            return jsonify({"error": "Scan not found"}), 404
+        return jsonify(res.data[0])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ── STARTUP ───────────────────────────────────────────────────────────────────
 
