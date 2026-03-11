@@ -1,60 +1,63 @@
 import sqlite3
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Before running this in the future, you need to download your Firebase Admin SDK json
+# and save it as "firebase_credentials.json" in this directory.
 
 DB_PATH = 'plant_management.db'
+CREDENTIALS_FILE = 'firebase_credentials.json'
 
-def migrate():
+def migrate_to_firebase():
+    try:
+        cred = credentials.Certificate(CREDENTIALS_FILE)
+        firebase_admin.initialize_app(cred)
+    except FileNotFoundError:
+        print(f"Error: {CREDENTIALS_FILE} not found!")
+        print("Please place your Firebase Admin SDK JSON key file in this folder and try again.")
+        return
+
+    db = firestore.client()
+    
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
+    print("Starting migration to Firebase...")
+
+    # 1. Users
+    cursor.execute("SELECT * FROM users")
+    users = cursor.fetchall()
+    print(f"Migrating {len(users)} users...")
+    for user in users:
+        user_dict = dict(user)
+        user_id = str(user_dict.pop('id'))
+        db.collection('users').document(user_id).set(user_dict)
+
+    # 2. Contractor Data
+    cursor.execute("SELECT * FROM contractor_data")
+    contractors = cursor.fetchall()
     
-    print("Starting migration...")
-    
-    # contractor_data table
-    try:
-        cursor.execute("ALTER TABLE contractor_data ADD COLUMN material TEXT")
-        print("Added 'material' to contractor_data")
-    except sqlite3.OperationalError:
-        print("'material' already exists in contractor_data")
+    # Store old ID to new ID mapping (in cases where we might let Firestore auto-generate IDs)
+    # But for simplicity, we'll use the SQLite integer ID as the string document ID
+    print(f"Migrating {len(contractors)} contractor records...")
+    for c in contractors:
+        c_dict = dict(c)
+        c_id = str(c_dict.pop('id'))
+        db.collection('contractor_data').document(c_id).set(c_dict)
 
-    try:
-        cursor.execute("ALTER TABLE contractor_data ADD COLUMN density REAL")
-        print("Added 'density' to contractor_data")
-    except sqlite3.OperationalError:
-        print("'density' already exists in contractor_data")
+    # 3. Volume Logs
+    cursor.execute("SELECT * FROM volume_logs")
+    logs = cursor.fetchall()
+    print(f"Migrating {len(logs)} volume logs...")
+    for log in logs:
+        log_dict = dict(log)
+        log_id = str(log_dict.pop('id'))
+        log_dict['section_id'] = str(log_dict['section_id']) # Convert foreign key to string
+        db.collection('volume_logs').document(log_id).set(log_dict)
 
-    # volume_logs table
-    try:
-        cursor.execute("ALTER TABLE volume_logs ADD COLUMN frontal_area REAL")
-        print("Added 'frontal_area' to volume_logs")
-    except sqlite3.OperationalError:
-        print("'frontal_area' already exists in volume_logs")
-
-    try:
-        cursor.execute("ALTER TABLE volume_logs ADD COLUMN img_original TEXT")
-        print("Added 'img_original' to volume_logs")
-    except sqlite3.OperationalError:
-        print("'img_original' already exists in volume_logs")
-
-    try:
-        cursor.execute("ALTER TABLE volume_logs ADD COLUMN img_grayscale TEXT")
-        print("Added 'img_grayscale' to volume_logs")
-    except sqlite3.OperationalError:
-        print("'img_grayscale' already exists in volume_logs")
-
-    try:
-        cursor.execute("ALTER TABLE volume_logs ADD COLUMN img_blur TEXT")
-        print("Added 'img_blur' to volume_logs")
-    except sqlite3.OperationalError:
-        print("'img_blur' already exists in volume_logs")
-
-    try:
-        cursor.execute("ALTER TABLE volume_logs ADD COLUMN img_mask TEXT")
-        print("Added 'img_mask' to volume_logs")
-    except sqlite3.OperationalError:
-        print("'img_mask' already exists in volume_logs")
-
-    conn.commit()
+    print("Migration finished completely!")
     conn.close()
-    print("Migration finished!")
 
 if __name__ == "__main__":
-    migrate()
+    migrate_to_firebase()

@@ -1,28 +1,58 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import sqlite3
 import cv2
 import numpy as np
 import base64
 from werkzeug.security import generate_password_hash, check_password_hash
 from ultralytics import YOLO
-import firebase_admin
-from firebase_admin import credentials, firestore
-import os
-from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
-CREDENTIALS_FILE = 'firebase_credentials.json'
+DB_PATH = 'plant_management.db'
 
-if os.path.exists(CREDENTIALS_FILE):
-    cred = credentials.Certificate(CREDENTIALS_FILE)
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ connected to Firebase Firestore")
-else:
-    print(f"⚠️ Warning: '{CREDENTIALS_FILE}' not found! Database APIs will fail. Please add your credentials file.")
-    db = None
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS contractor_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plant_name TEXT NOT NULL,
+            section TEXT NOT NULL,
+            material TEXT,
+            length REAL,
+            width REAL,
+            pit_depth REAL,
+            density REAL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS volume_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            section_id INTEGER,
+            volume REAL,
+            weight_ton REAL,
+            frontal_area REAL,
+            img_original TEXT,
+            img_grayscale TEXT,
+            img_blur TEXT,
+            img_mask TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(section_id) REFERENCES contractor_data(id)
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 def encode_image(img):
     _, buffer = cv2.imencode('.jpg', img)
@@ -32,43 +62,35 @@ def encode_image(img):
 
 @app.route('/api/signup', methods=['POST'])
 def signup():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
     email = data.get('email')
     password = data.get('password')
     if not email or not password:
         return jsonify({"error": "Missing credentials"}), 400
-    
-    # Check if email exists
-    users_ref = db.collection('users').where('email', '==', email).get()
-    if users_ref:
-        return jsonify({"error": "Email already exists"}), 400
-
     hashed_password = generate_password_hash(password)
-    new_user_ref = db.collection('users').document()
-    new_user_ref.set({
-        "email": email,
-        "password": hashed_password,
-        "created_at": datetime.now()
-    })
-    return jsonify({"success": True, "message": "User created successfully"})
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, hashed_password))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": "User created successfully"})
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Email already exists"}), 400
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
     email = data.get('email')
     password = data.get('password')
-    
-    users_ref = db.collection('users').where('email', '==', email).limit(1).get()
-    if not users_ref:
-        return jsonify({"error": "Invalid email or password"}), 401
-    
-    user = users_ref[0].to_dict()
-    user_id = users_ref[0].id
-    
-    if check_password_hash(user.get('password', ''), password):
-        return jsonify({"success": True, "user": {"id": user_id, "email": user['email']}})
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+    user = cursor.fetchone()
+    conn.close()
+    if user and check_password_hash(user['password'], password):
+        return jsonify({"success": True, "user": {"id": user['id'], "email": user['email']}})
     else:
         return jsonify({"error": "Invalid email or password"}), 401
 
@@ -76,37 +98,39 @@ def login():
 
 @app.route('/api/plants', methods=['GET'])
 def get_plants():
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    contractors = db.collection('contractor_data').get()
-    plants = list(set([doc.to_dict().get('plant_name') for doc in contractors if doc.to_dict().get('plant_name')]))
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT plant_name FROM contractor_data')
+    plants = [row[0] for row in cursor.fetchall()]
+    conn.close()
     return jsonify(plants)
 
 @app.route('/api/sections/<plant_name>', methods=['GET'])
 def get_sections(plant_name):
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    sections_ref = db.collection('contractor_data').where('plant_name', '==', plant_name).get()
-    sections = []
-    for doc in sections_ref:
-        s = doc.to_dict()
-        s['id'] = doc.id
-        sections.append(s)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM contractor_data WHERE plant_name = ?', (plant_name,))
+    sections = [dict(row) for row in cursor.fetchall()]
+    conn.close()
     return jsonify(sections)
 
 @app.route('/api/contractor', methods=['POST'])
 def save_contractor():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
-    new_ref = db.collection('contractor_data').document()
-    new_ref.set({
-        "plant_name": data['plantName'],
-        "section": data['section'],
-        "material": data.get('material', ''),
-        "length": data['length'],
-        "width": data['width'],
-        "pit_depth": data['pitDepth'],
-        "density": data.get('density', 1600),
-        "created_at": datetime.now()
-    })
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO contractor_data (plant_name, section, material, length, width, pit_depth, density)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        data['plantName'], data['section'],
+        data.get('material', ''),
+        data['length'], data['width'], data['pitDepth'],
+        data.get('density', 1600)
+    ))
+    conn.commit()
+    conn.close()
     return jsonify({"success": True})
 
 # ── IMAGE PROCESSING ──────────────────────────────────────────────────────────
@@ -114,17 +138,15 @@ def save_contractor():
 @app.route('/api/process-image', methods=['POST'])
 def process_image_api():
     data = request.json
-    image_b64 = data.get('image', '').split(',')[-1]
+    image_b64 = data.get('image').split(',')[-1]
     wall_height = float(data.get('wall_height') if data.get('wall_height') is not None else 5.0)
     pit_width   = float(data.get('pit_width') if data.get('pit_width') is not None else 6.0)
     density     = float(data.get('density') if data.get('density') is not None else 1600.0)
 
-    try:
-        nparr = np.frombuffer(base64.b64decode(image_b64), np.uint8)
-        img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is None: raise ValueError("Invalid image")
-    except Exception as e:
-        return jsonify({"error": "Invalid image format"}), 400
+    nparr = np.frombuffer(base64.b64decode(image_b64), np.uint8)
+    img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return jsonify({"error": "Invalid image"}), 400
 
     # 1. Grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -206,7 +228,7 @@ def detect_gate_material():
         
     data = request.json
     try:
-        image_b64 = data.get('image', '').split(',')[-1]
+        image_b64 = data.get('image').split(',')[-1]
         nparr = np.frombuffer(base64.b64decode(image_b64), np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
@@ -239,62 +261,62 @@ def detect_gate_material():
 
 @app.route('/api/user', methods=['POST'])
 def save_log():
-    if not db: return jsonify({"error": "Database not configured"}), 500
     data = request.json
-    new_log_ref = db.collection('volume_logs').document()
-    new_log_ref.set({
-        "section_id": str(data['section_id']),
-        "volume": data['volume'],
-        "weight_ton": data['weight_ton'],
-        "frontal_area": data.get('frontal_area', 0),
-        "img_original": data.get('img_original', ''),
-        "img_grayscale": data.get('img_grayscale', ''),
-        "img_blur": data.get('img_blur', ''),
-        "img_mask": data.get('img_mask', ''),
-        "timestamp": datetime.now()
-    })
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO volume_logs
+          (section_id, volume, weight_ton, frontal_area,
+           img_original, img_grayscale, img_blur, img_mask)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        data['section_id'],
+        data['volume'],
+        data['weight_ton'],
+        data.get('frontal_area', 0),
+        data.get('img_original', ''),
+        data.get('img_grayscale', ''),
+        data.get('img_blur', ''),
+        data.get('img_mask', '')
+    ))
+    conn.commit()
+    conn.close()
     return jsonify({"success": True})
 
 @app.route('/api/stats/<section_id>', methods=['GET'])
 def get_stats(section_id):
     """Summary list — no images (keeps response small)."""
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    
-    logs_ref = db.collection('volume_logs').where('section_id', '==', str(section_id))
-    # Order By requires an index in Firestore, might fail initially until user builds one.
-    # So we fetch and sort manually for now just to be safe.
-    docs = logs_ref.get()
-    
-    logs = []
-    for doc in docs:
-        d = doc.to_dict()
-        logs.append({
-            "id": doc.id,
-            "section_id": d.get('section_id'),
-            "volume": d.get('volume'),
-            "weight_ton": d.get('weight_ton'),
-            "frontal_area": d.get('frontal_area'),
-            "timestamp": d.get('timestamp')
-        })
-        
-    logs.sort(key=lambda x: str(x['timestamp']), reverse=True)
-    return jsonify(logs[:20])
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, section_id, volume, weight_ton, frontal_area, timestamp
+        FROM volume_logs
+        WHERE section_id = ?
+        ORDER BY timestamp DESC
+        LIMIT 20
+    ''', (section_id,))
+    logs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return jsonify(logs)
 
 @app.route('/api/scan/<log_id>', methods=['GET'])
 def get_scan_detail(log_id):
     """Full detail including all preprocessing images for a past scan."""
-    if not db: return jsonify({"error": "Database not configured"}), 500
-    doc = db.collection('volume_logs').document(log_id).get()
-    if not doc.exists:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM volume_logs WHERE id = ?', (log_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
         return jsonify({"error": "Scan not found"}), 404
-        
-    data = doc.to_dict()
-    data['id'] = doc.id
-    return jsonify(data)
+    return jsonify(dict(row))
 
 # ── STARTUP ───────────────────────────────────────────────────────────────────
 
 def run_app():
+    init_db()
     print("✅ Backend Server running on http://localhost:5000")
     app.run(port=5000, host='0.0.0.0', debug=False, use_reloader=False)
 
