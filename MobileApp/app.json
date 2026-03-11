@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "MobileApp",
+    "slug": "MobileApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.malhar1.MobileApp"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to analyze CCTV snapshots.",
+          "cameraPermission": "The app accesses your camera to take live CCTV photos."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d4a51318-e0bd-405c-b601-2b0cdfee987c"
+      }
+    }
+  }
+}
