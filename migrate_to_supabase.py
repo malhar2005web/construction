@@ -4,7 +4,7 @@ from supabase import create_client, Client
 
 DB_PATH = 'plant_management.db'
 
-# Use Supabase credentials provided
+# Supabase credentials
 SUPABASE_URL = "https://eaztqygthkxwvgdspmnw.supabase.co"
 SUPABASE_KEY = "sb_publishable_FVWqoGatXU7yPkHXRdGBYg_-LV-VCi-"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -27,9 +27,10 @@ def migrate_to_supabase():
         print(f"Migrating {len(users)} users...")
         for user in users:
             u_dict = dict(user)
-            u_dict.pop('id', None)  # Let Supabase auto-generate the ID, or we keep it if we want to preserve foreign keys. Wait, volume_logs reference contractor_data.id!
-            # For users we can keep ID by supplying it (Postgres allows inserting into SERIAL id if explicitly named)
-            supabase.table('users').insert(dict(user)).execute()
+            existing = supabase.table('users').select('id').eq('email', u_dict['email']).execute()
+            if not existing.data:
+                supabase.table('users').insert(u_dict).execute()
+        print("  Users migrated.")
     except Exception as e:
         print(f"Error migrating users: {e}")
 
@@ -39,7 +40,11 @@ def migrate_to_supabase():
         contractors = cursor.fetchall()
         print(f"Migrating {len(contractors)} contractor records...")
         for c in contractors:
-            supabase.table('contractor_data').insert(dict(c)).execute()
+            c_dict = dict(c)
+            existing = supabase.table('contractor_data').select('id').eq('id', c_dict['id']).execute()
+            if not existing.data:
+                supabase.table('contractor_data').insert(c_dict).execute()
+        print("  Contractor data migrated.")
     except Exception as e:
         print(f"Error migrating contractor_data: {e}")
 
@@ -49,7 +54,14 @@ def migrate_to_supabase():
         logs = cursor.fetchall()
         print(f"Migrating {len(logs)} volume logs...")
         for log in logs:
-            supabase.table('volume_logs').insert(dict(log)).execute()
+            l_dict = dict(log)
+            # TUNE: Remove columns that might not exist in Supabase schema or cause issues
+            l_dict.pop('image_path', None) 
+            
+            existing = supabase.table('volume_logs').select('id').eq('id', l_dict['id']).execute()
+            if not existing.data:
+                supabase.table('volume_logs').insert(l_dict).execute()
+        print("  Volume logs migrated.")
     except Exception as e:
         print(f"Error migrating volume_logs: {e}")
 
