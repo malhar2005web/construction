@@ -1,0 +1,38 @@
+﻿
+Builds for @mallubhai/MobileApp:
+
+ID                       d22f1024-a5f5-4a9f-98ef-9dac47c9d1e2
+Platform                 Android
+Status                   new
+Profile                  preview
+Distribution             store
+SDK Version              54.0.0
+Version                  1.0.0
+Version code             1
+Commit                   85f73b001cf78a3190c836a9cf6749a7acc8862b
+Logs                     https://expo.dev/accounts/mallubhai/projects/MobileApp/builds/d22f1024-a5f5-4a9f-98ef-9dac47c9d1e2
+Application Archive URL  null
+Build Artifacts URL      null
+Fingerprint              <in progress>
+Started at               11/3/2026, 10:24:39 pm
+Finished at              <in progress>
+Started by               mallubhai
+
+ΓÇöΓÇöΓÇö
+
+ID                       030a5721-e029-4e3d-887a-8e603e8fa090
+Platform                 Android
+Status                   in queue
+Profile                  development
+Distribution             internal
+SDK Version              54.0.0
+Version                  1.0.0
+Version code             1
+Commit                   85f73b001cf78a3190c836a9cf6749a7acc8862b
+Logs                     https://expo.dev/accounts/mallubhai/projects/MobileApp/builds/030a5721-e029-4e3d-887a-8e603e8fa090
+Application Archive URL  null
+Build Artifacts URL      null
+Fingerprint              <in progress>
+Started at               11/3/2026, 10:17:48 pm
+Finished at              <in progress>
+Started by               mallubhai
