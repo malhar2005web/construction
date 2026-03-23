@@ -1,8 +1,8 @@
 Flask
 Flask-Cors
-opencv-python
+opencv-python-headless
 numpy
 Werkzeug
 supabase
-ultralytics
 pydantic
+gunicorn
