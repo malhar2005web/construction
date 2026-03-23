@@ -1,6 +1,8 @@
-Flask==3.0.0
-Flask-Cors==4.0.0
-opencv-python==4.8.1.78
-numpy==1.26.1
-Werkzeug==3.0.1
-sqlite3
+Flask
+Flask-Cors
+opencv-python
+numpy
+Werkzeug
+supabase
+ultralytics
+pydantic

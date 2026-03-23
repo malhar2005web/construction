@@ -9,6 +9,10 @@ import os
 from datetime import datetime
 from supabase import create_client, Client
 
+# Set environment to prevent GUI issues in non-interactive environments
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
@@ -167,7 +171,7 @@ def process_image_api():
         heights.append(h - np.min(ys) if len(ys) > 0 else 0)
     heights      = np.array(heights)
     heights_m    = heights * (wall_height / h)
-    frontal_area = np.sum(heights_m * (pit_width / w))
+    frontal_area = float(np.sum(heights_m * (float(pit_width) / float(w))))
     section_breadth  = float(data.get('section_breadth') if data.get('section_breadth') is not None else 1.0)
     volume = frontal_area * section_breadth * 0.5
     weight = volume * density
@@ -182,9 +186,9 @@ def process_image_api():
         "mask":        encode_image(final_mask),
         "overlay":     encode_image(overlay),
         "original":    image_b64,
-        "frontal_area": round(frontal_area, 2),
-        "volume":       round(volume, 2),
-        "weight_ton":   round(weight / 1000, 2),
+        "frontal_area": float(f"{frontal_area:.2f}"),
+        "volume":       float(f"{volume:.2f}"),
+        "weight_ton":   float(f"{(weight / 1000.0):.2f}"),
         "success": True
     })
 
@@ -222,7 +226,7 @@ def detect_gate_material():
             class_name = result.names[cls_id]
             detections.append({
                 "class": class_name,
-                "confidence": round(conf * 100, 2)
+                "confidence": float(f"{(conf * 100):.2f}")
             })
             
         return jsonify({
@@ -240,11 +244,14 @@ def detect_gate_material():
 def save_log():
     data = request.json
     try:
+        if not data.get('section_id'):
+            return jsonify({"error": "Missing section_id"}), 400
+            
         supabase.table('volume_logs').insert({
             "section_id": int(data['section_id']),
-            "volume": data['volume'],
-            "weight_ton": data['weight_ton'],
-            "frontal_area": data.get('frontal_area', 0),
+            "volume": float(data.get('volume', 0)),
+            "weight_ton": float(data.get('weight_ton', 0)),
+            "frontal_area": float(data.get('frontal_area', 0)),
             "img_original": data.get('img_original', ''),
             "img_grayscale": data.get('img_grayscale', ''),
             "img_blur": data.get('img_blur', ''),
@@ -252,6 +259,7 @@ def save_log():
         }).execute()
         return jsonify({"success": True})
     except Exception as e:
+        print(f"❌ Save Log Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stats/<section_id>', methods=['GET'])
@@ -278,6 +286,68 @@ def get_scan_detail(log_id):
             return jsonify({"error": "Scan not found"}), 404
         return jsonify(res.data[0])
     except Exception as e:
+        print(f"❌ Scan Detail Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ── MATERIAL LIBRARY ─────────────────────────────────────────────────────────
+
+@app.route('/api/materials', methods=['GET'])
+def get_materials():
+    try:
+        res = supabase.table('material_library').select('*').execute()
+        return jsonify(res.data)
+    except Exception:
+        # Fallback to defaults if table doesn't exist
+        return jsonify([
+            {"name": "10mm Aggregate"},
+            {"name": "20mm Aggregate"},
+            {"name": "Coarse Sand"},
+            {"name": "Natural Sand"}
+        ])
+
+@app.route('/api/materials', methods=['POST'])
+def add_material():
+    data = request.json
+    try:
+        supabase.table('material_library').insert({"name": data['name']}).execute()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── DATA MANAGEMENT ──────────────────────────────────────────────────────────
+
+@app.route('/api/log/<log_id>', methods=['DELETE'])
+def delete_log(log_id):
+    try:
+        supabase.table('volume_logs').delete().eq('id', log_id).execute()
+        return jsonify({"success": True, "message": "Log deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/plant-report/<plant_name>', methods=['GET'])
+def get_plant_report(plant_name):
+    """Aggregated data for all sections of a plant."""
+    try:
+        # 1. Get all sections for this plant
+        sections_res = supabase.table('contractor_data').select('id, section').eq('plant_name', plant_name).execute()
+        section_ids = [s['id'] for s in sections_res.data]
+        
+        if not section_ids:
+             return jsonify({
+                "plant": plant_name,
+                "sections": [],
+                "recent_logs": []
+            })
+        
+        # 2. Get latest logs for these IDs
+        logs_res = supabase.table('volume_logs').select('*').in_('section_id', section_ids).order('timestamp', desc=True).execute()
+        
+        return jsonify({
+            "plant": plant_name,
+            "sections": sections_res.data,
+            "recent_logs": logs_res.data
+        })
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 # ── STARTUP ───────────────────────────────────────────────────────────────────
@@ -288,3 +358,4 @@ def run_app():
 
 if __name__ == '__main__':
     run_app()
+
