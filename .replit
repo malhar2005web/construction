@@ -50,11 +50,15 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 5001
+externalPort = 3000
+
+[[ports]]
 localPort = 8000
 externalPort = 8000
 exposeLocalhost = true
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "backend:app"]
-build = ["npm", "run", "build"]
+run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "--timeout", "120", "-w", "1", "backend:app"]
+build = ["bash", "-c", "pip install -r requirements.txt --quiet && cd frontend-react && npm install && npm run build"]
