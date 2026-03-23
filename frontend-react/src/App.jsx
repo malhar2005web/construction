@@ -8,7 +8,7 @@ import {
   ScanLine, ShieldCheck, History
 } from 'lucide-react'
 
-const API_URL = 'https://6f34a3c8d2d347.lhr.life/api'
+const API_URL = '/api'
 
 // --- Components ---
 

@@ -4,10 +4,17 @@ import cv2
 import numpy as np
 import base64
 from werkzeug.security import generate_password_hash, check_password_hash
-from ultralytics import YOLO
 import os
+import uuid
 from datetime import datetime
 from supabase import create_client, Client
+
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
+    YOLO = None
 
 # Set environment to prevent GUI issues in non-interactive environments
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
@@ -45,7 +52,9 @@ def signup():
 
     hashed_password = generate_password_hash(password)
     try:
+        new_id = uuid.uuid4().int & 0x7FFFFFFF
         supabase.table('users').insert({
+            "id": new_id,
             "email": email,
             "password": hashed_password
         }).execute()
@@ -194,13 +203,16 @@ def process_image_api():
 
 # ── GATE DETECTION ────────────────────────────────────────────────────────────
 
-GATE_MODEL_PATH = r'c:\Users\Malhar\OneDrive\Desktop\New folder (7)\my_model_2_extracted\my_model\weights\best.pt'
+GATE_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'my_model_2_extracted', 'my_model', 'weights', 'best.pt')
 gate_model = None
-try:
-    gate_model = YOLO(GATE_MODEL_PATH)
-    print("✅ Gate Material YOLO Model loaded successfully.")
-except Exception as e:
-    print(f"⚠️ Warning: Could not load gate model: {e}")
+if YOLO_AVAILABLE:
+    try:
+        gate_model = YOLO(GATE_MODEL_PATH)
+        print("✅ Gate Material YOLO Model loaded successfully.")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not load gate model: {e}")
+else:
+    print("⚠️ Warning: YOLO not available. Gate detection disabled.")
 
 @app.route('/api/detect-gate-material', methods=['POST'])
 def detect_gate_material():
@@ -353,8 +365,8 @@ def get_plant_report(plant_name):
 # ── STARTUP ───────────────────────────────────────────────────────────────────
 
 def run_app():
-    print("✅ Backend Server running on http://localhost:5000")
-    app.run(port=5000, host='0.0.0.0', debug=False, use_reloader=False)
+    print("✅ Backend Server running on http://localhost:8000")
+    app.run(port=8000, host='localhost', debug=False, use_reloader=False)
 
 if __name__ == '__main__':
     run_app()
