@@ -20,8 +20,21 @@ except ImportError:
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-app = Flask(__name__)
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), 'frontend-react', 'dist')
+app = Flask(__name__, static_folder=FRONTEND_DIST, static_url_path='')
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
+if os.path.exists(FRONTEND_DIST):
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        if path and path.startswith('api'):
+            from flask import abort
+            abort(404)
+        file_path = os.path.join(FRONTEND_DIST, path)
+        if path and os.path.exists(file_path):
+            return app.send_static_file(path)
+        return app.send_static_file('index.html')
 
 # Supabase Credentials
 SUPABASE_URL = "https://eaztqygthkxwvgdspmnw.supabase.co"
