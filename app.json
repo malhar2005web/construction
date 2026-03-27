@@ -12,7 +12,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.malhar1.mobileapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -45,6 +49,7 @@
       "policy": "appVersion"
     },
     "extra": {
+      "apiBaseUrl": "http://173.249.59.181:8000",
       "eas": {
         "projectId": "39004bb0-7637-468d-bd4b-f2daefd3c218"
       }

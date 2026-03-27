@@ -34,3 +34,10 @@ CREATE TABLE volume_logs (
   img_mask text,
   timestamp timestamp with time zone default now()
 );
+
+-- Create Material Library Table
+CREATE TABLE material_library (
+  id serial primary key,
+  name text not null,
+  created_at timestamp with time zone default now()
+);

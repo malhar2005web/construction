@@ -3,6 +3,6 @@ Flask-Cors
 opencv-python-headless
 numpy
 Werkzeug
-supabase
-pydantic
+python-dotenv
+psycopg2-binary
 gunicorn

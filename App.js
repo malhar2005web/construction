@@ -5,6 +5,7 @@ import {
   SafeAreaView, Platform, StatusBar, Modal, Animated
 } from 'react-native';
 import axios from 'axios';
+import Constants from 'expo-constants';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   Settings, LayoutDashboard, ArrowLeft, PlusCircle,
@@ -20,9 +21,31 @@ import * as FileSystem from 'expo-file-system';
 const { width, height } = Dimensions.get('window');
 
 // ─── API CONFIG ────────────────────────────────────────────────────────────────
+const DEFAULT_WEB_API_URL = 'http://127.0.0.1:5000/api';
+const DEFAULT_MOBILE_API_URL = 'http://173.249.59.181:8000/api';
+
+const normalizeApiUrl = (value) => {
+  if (!value) return null;
+
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+};
+
+const getConfiguredApiUrl = () => {
+  const extra = Constants.expoConfig?.extra ?? Constants.manifest2?.extra ?? {};
+  return normalizeApiUrl(
+    process.env.EXPO_PUBLIC_API_URL ||
+    extra.apiBaseUrl
+  );
+};
+
 const getBaseUrl = () => {
-  if (Platform.OS === 'web') return 'http://127.0.0.1:5000/api';
-  return 'https://6f34a3c8d2d347.lhr.life/api'; // Most stable backend URL
+  const configuredUrl = getConfiguredApiUrl();
+  if (configuredUrl) return configuredUrl;
+  if (Platform.OS === 'web') return DEFAULT_WEB_API_URL;
+  return DEFAULT_MOBILE_API_URL;
 };
 const API_URL = getBaseUrl();
 
@@ -62,7 +85,7 @@ const SectionRow = ({ s, onPress }) => (
     </View>
     <View style={{ flex: 1, marginLeft: 14 }}>
       <Text style={styles.cardTitle}>{s.section}</Text>
-      <Text style={styles.cardSub}>{s.material} · {s.density} kg/m³</Text>
+      <Text style={styles.cardSub}>{s.material} · {s.density} kg/L</Text>
     </View>
     <ChevronRight color="#475569" size={18} />
   </TouchableOpacity>
@@ -109,7 +132,7 @@ export default function App() {
   const [showMaterialPicker, setShowMaterialPicker] = useState(false);
   const [showCustomMaterialForm, setShowCustomMaterialForm] = useState(false);
   const [customMatName, setCustomMatName] = useState('');
-  const [density, setDensity] = useState('1600'); // standalone density field
+  const [density, setDensity] = useState('1.6'); // standalone density field in kg/L
 
   // ── Monitor Data ─────────────────────────────────────────────────────────────
   const [plants, setPlants] = useState([]);
@@ -219,7 +242,7 @@ export default function App() {
         density: parseFloat(density),
       });
       Alert.alert('✅ Success', 'Section added successfully!');
-      setView('home'); setPlantName(''); setSectionName(''); setPitDepth(''); setPitWidth(''); setSectionLength(''); setDensity('1600');
+      setView('home'); setPlantName(''); setSectionName(''); setPitDepth(''); setPitWidth(''); setSectionLength(''); setDensity('1.6');
     } catch { Alert.alert('Error', 'Setup failed. Check backend.'); }
   };
 
@@ -496,13 +519,13 @@ export default function App() {
             </View>
             {/* Density — separate editable field */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Density (kg/m³)</Text>
+              <Text style={styles.label}>Density (kg/L)</Text>
               <TextInput
                 style={styles.inputSimple}
                 value={density}
                 onChangeText={setDensity}
                 keyboardType="numeric"
-                placeholder="e.g. 1600"
+                placeholder="e.g. 1.6"
                 placeholderTextColor="#374151"
               />
             </View>
@@ -661,7 +684,7 @@ export default function App() {
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={styles.infoLabel}>DENSITY</Text>
-                  <Text style={styles.infoValue}>{selectedSection?.density} kg/m³</Text>
+                  <Text style={styles.infoValue}>{selectedSection?.density} kg/L</Text>
                 </View>
               </View>
             </View>
