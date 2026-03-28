@@ -49,6 +49,18 @@ const getBaseUrl = () => {
 };
 const API_URL = getBaseUrl();
 
+const formatApiError = (err) => {
+  const backendError = err?.response?.data?.error;
+  if (backendError) return backendError;
+  const backendDetails = err?.response?.data?.details;
+  if (backendDetails) return backendDetails;
+  const responsePayload = err?.response?.data;
+  if (typeof responsePayload === 'string' && responsePayload.trim()) return responsePayload;
+  if (responsePayload && typeof responsePayload === 'object') return JSON.stringify(responsePayload);
+  if (err?.message) return err.message;
+  return 'Server error';
+};
+
 axios.interceptors.request.use(config => {
   config.headers['Bypass-Tunnel-Reminder'] = 'true';
   config.headers['User-Agent'] = 'VisionInventoryApp';
@@ -214,7 +226,7 @@ export default function App() {
       const res = await axios.post(`${API_URL}/login`, { email, password });
       afterLogin(res.data.user);
     } catch (err) {
-      Alert.alert('Login Failed', err.response?.data?.error || 'Server error');
+      Alert.alert('Login Failed', `${formatApiError(err)}\n\nAPI: ${API_URL}`);
     }
   };
 
@@ -225,7 +237,7 @@ export default function App() {
       Alert.alert('Success', 'Account created! Please sign in.');
       setIsSignup(false);
     } catch (err) {
-      Alert.alert('Signup Failed', err.response?.data?.error || 'Server error');
+      Alert.alert('Signup Failed', `${formatApiError(err)}\n\nAPI: ${API_URL}`);
     }
   };
 
@@ -425,6 +437,9 @@ export default function App() {
             <View style={styles.iconContainer}><Database color="#8b5cf6" size={38} /></View>
             <Text style={styles.title}>{isSignup ? 'Create Account' : 'Welcome Back'}</Text>
             <Text style={styles.subtitle}>Plant Management System</Text>
+            <Text style={[styles.toggleText, { marginBottom: 18, textAlign: 'center', fontSize: 11 }]}>
+              API: {API_URL}
+            </Text>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
