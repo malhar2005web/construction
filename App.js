@@ -21,8 +21,7 @@ import * as FileSystem from 'expo-file-system';
 const { width, height } = Dimensions.get('window');
 
 // ─── API CONFIG ────────────────────────────────────────────────────────────────
-const DEFAULT_WEB_API_URL = 'http://127.0.0.1:5000/api';
-const DEFAULT_MOBILE_API_URL = 'http://173.249.59.181/api';
+const DEFAULT_DEV_API_URL = 'http://127.0.0.1:8000/api';
 
 const normalizeApiUrl = (value) => {
   if (!value) return null;
@@ -35,17 +34,13 @@ const normalizeApiUrl = (value) => {
 
 const getConfiguredApiUrl = () => {
   const extra = Constants.expoConfig?.extra ?? Constants.manifest2?.extra ?? {};
-  return normalizeApiUrl(
-    process.env.EXPO_PUBLIC_API_URL ||
-    extra.apiBaseUrl
-  );
+  return normalizeApiUrl(extra.apiBaseUrl || process.env.EXPO_PUBLIC_API_URL);
 };
 
 const getBaseUrl = () => {
   const configuredUrl = getConfiguredApiUrl();
   if (configuredUrl) return configuredUrl;
-  if (Platform.OS === 'web') return DEFAULT_WEB_API_URL;
-  return DEFAULT_MOBILE_API_URL;
+  return DEFAULT_DEV_API_URL;
 };
 const API_URL = getBaseUrl();
 

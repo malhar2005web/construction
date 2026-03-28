@@ -9,6 +9,9 @@
         },
         "preview": {
             "channel": "preview",
+            "env": {
+                "EXPO_PUBLIC_API_URL": "https://api.moviemate.in"
+            },
             "android": {
                 "buildType": "apk"
             }

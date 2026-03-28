@@ -2,7 +2,7 @@
   "expo": {
     "name": "MobileApp",
     "slug": "MobileApp",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,6 +19,7 @@
       }
     },
     "android": {
+      "versionCode": 2,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -50,7 +51,6 @@
       "policy": "appVersion"
     },
     "extra": {
-      "apiBaseUrl": "http://173.249.59.181",
       "eas": {
         "projectId": "5f48120a-471b-4ca0-a7db-97be55a9ab47"
       }
