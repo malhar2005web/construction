@@ -22,7 +22,7 @@ const { width, height } = Dimensions.get('window');
 
 // ─── API CONFIG ────────────────────────────────────────────────────────────────
 const DEFAULT_WEB_API_URL = 'http://127.0.0.1:5000/api';
-const DEFAULT_MOBILE_API_URL = 'http://173.249.59.181:8000/api';
+const DEFAULT_MOBILE_API_URL = 'http://173.249.59.181/api';
 
 const normalizeApiUrl = (value) => {
   if (!value) return null;

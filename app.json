@@ -50,11 +50,10 @@
       "policy": "appVersion"
     },
     "extra": {
-      "apiBaseUrl": "http://173.249.59.181:8000",
+      "apiBaseUrl": "http://173.249.59.181",
       "eas": {
-        "projectId": "39004bb0-7637-468d-bd4b-f2daefd3c218"
+        "projectId": "5f48120a-471b-4ca0-a7db-97be55a9ab47"
       }
-    },
-    "owner": "manutai"
+    }
   }
 }
