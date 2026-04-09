@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules/
+backend-node/node_modules/
 
 # Expo
 .expo/
@@ -25,6 +26,7 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+backend-node/*.log
 
 # macOS
 .DS_Store
@@ -40,6 +42,7 @@ __pycache__/
 *.db
 *.zip
 venv/
+.venv/
 
 # generated native folders
 /ios

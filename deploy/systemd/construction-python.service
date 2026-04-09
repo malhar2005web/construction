@@ -1,0 +1,17 @@
+[Unit]
+Description=Construction Python API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/construction
+EnvironmentFile=/root/construction/.env
+ExecStart=/root/construction/venv/bin/python /root/construction/backend.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/construction-python.log
+StandardError=append:/var/log/construction-python-error.log
+
+[Install]
+WantedBy=multi-user.target

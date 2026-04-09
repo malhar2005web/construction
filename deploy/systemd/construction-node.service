@@ -1,0 +1,17 @@
+[Unit]
+Description=Construction Node API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/construction/backend-node
+EnvironmentFile=/root/construction/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/construction-node.log
+StandardError=append:/var/log/construction-node-error.log
+
+[Install]
+WantedBy=multi-user.target

@@ -110,6 +110,38 @@ NODE_API_PORT=3000
 APP_PORT=8000
 ```
 
+## systemd Setup
+
+To keep both services running after reboot, use the unit files in [`deploy/systemd`](C:/Users/Malhar/OneDrive/Desktop/construction/deploy/systemd).
+
+Copy them on the server:
+
+```bash
+sudo cp deploy/systemd/construction-node.service /etc/systemd/system/
+sudo cp deploy/systemd/construction-python.service /etc/systemd/system/
+```
+
+Reload and enable:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable construction-node
+sudo systemctl enable construction-python
+sudo systemctl start construction-node
+sudo systemctl start construction-python
+```
+
+Useful checks:
+
+```bash
+sudo systemctl status construction-node
+sudo systemctl status construction-python
+sudo journalctl -u construction-node -n 100 --no-pager
+sudo journalctl -u construction-python -n 100 --no-pager
+```
+
+If your server paths are different from `/root/construction` or the Python virtualenv path changes, update the service files before copying them.
+
 Quick verify:
 
 ```bash
@@ -138,3 +170,4 @@ npx.cmd eas-cli build -p android --profile preview
 - `app.json` no longer hardcodes the production API host.
 - The mobile runtime falls back to `http://127.0.0.1:8000/api` only when no Expo config value is present.
 - Existing Flask-created password hashes remain compatible because the Node API verifies Werkzeug-style `pbkdf2` and `scrypt` hashes.
+- Node runtime logs should not be committed; `backend-node/*.log` is ignored.
