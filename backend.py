@@ -1,15 +1,20 @@
 from contextlib import contextmanager
 from datetime import datetime
+from functools import wraps
 import base64
+import hashlib
+import hmac
+import json
 import os
+import time
 
 import cv2
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 import numpy as np
 from dotenv import load_dotenv
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -52,6 +57,8 @@ DB_CONFIG = {
 
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", os.getenv("APP_PORT", "8000")))
+APP_SECRET = os.getenv("APP_SECRET", os.getenv("SECRET_KEY", "construction-dev-secret"))
+AUTH_TOKEN_MAX_AGE_SECONDS = int(os.getenv("AUTH_TOKEN_MAX_AGE_SECONDS", str(7 * 24 * 60 * 60)))
 
 KG_PER_LITER_DEFAULT = 1.6
 
@@ -96,6 +103,158 @@ def execute_write(query, params=None, fetch_one_row=False):
             row = dict(cursor.fetchone()) if fetch_one_row else None
             conn.commit()
             return row
+
+
+def ensure_audit_table():
+    execute_write(
+        '''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id serial primary key,
+            user_id integer references users(id) on delete set null,
+            event_type text not null,
+            entity_type text,
+            entity_id text,
+            description text not null,
+            metadata jsonb not null default '{}'::jsonb,
+            ip_address text,
+            user_agent text,
+            created_at timestamp with time zone default now()
+        )
+        '''
+    )
+    execute_write(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_user_created_at ON audit_logs (user_id, created_at DESC)'
+    )
+    execute_write(
+        'CREATE INDEX IF NOT EXISTS idx_audit_logs_event_created_at ON audit_logs (event_type, created_at DESC)'
+    )
+
+
+def get_request_ip():
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.remote_addr
+
+
+def base64url_encode(raw_bytes):
+    return base64.urlsafe_b64encode(raw_bytes).decode('utf-8').rstrip('=')
+
+
+def base64url_decode(value):
+    padding = '=' * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f'{value}{padding}')
+
+
+def sign_token_payload(encoded_header, encoded_payload):
+    return base64url_encode(
+        hmac.new(
+            APP_SECRET.encode('utf-8'),
+            f'{encoded_header}.{encoded_payload}'.encode('utf-8'),
+            hashlib.sha256,
+        ).digest()
+    )
+
+
+def create_auth_token(user):
+    encoded_header = base64url_encode(
+        json.dumps({"alg": "HS256", "typ": "CST"}).encode('utf-8')
+    )
+    encoded_payload = base64url_encode(
+        json.dumps({
+            "user_id": user["id"],
+            "email": user["email"],
+            "exp": int(time.time()) + AUTH_TOKEN_MAX_AGE_SECONDS,
+        }).encode('utf-8')
+    )
+    signature = sign_token_payload(encoded_header, encoded_payload)
+    return f'{encoded_header}.{encoded_payload}.{signature}'
+
+
+def extract_auth_token():
+    auth_header = request.headers.get('Authorization', '')
+    prefix = 'Bearer '
+    if auth_header.startswith(prefix):
+        return auth_header[len(prefix):].strip()
+    return None
+
+
+def decode_auth_token(token):
+    parts = str(token or '').split('.')
+    if len(parts) != 3:
+        raise ValueError('Invalid authentication token')
+
+    encoded_header, encoded_payload, signature = parts
+    expected_signature = sign_token_payload(encoded_header, encoded_payload)
+    if not hmac.compare_digest(signature, expected_signature):
+        raise ValueError('Invalid authentication token')
+
+    payload = json.loads(base64url_decode(encoded_payload).decode('utf-8'))
+    if int(payload.get('exp', 0)) < int(time.time()):
+        raise ValueError('Session expired. Please login again.')
+    return payload
+
+
+def authenticate_request():
+    token = extract_auth_token()
+    if not token:
+        return None, (jsonify({"error": "Authentication required"}), 401)
+
+    try:
+        payload = decode_auth_token(token)
+    except ValueError as exc:
+        return None, (jsonify({"error": str(exc)}), 401)
+
+    user = fetch_one(
+        'SELECT id, email FROM users WHERE id = %s LIMIT 1',
+        (payload.get('user_id'),),
+    )
+    if not user:
+        return None, (jsonify({"error": "User not found"}), 401)
+    return user, None
+
+
+def require_auth(route_handler):
+    @wraps(route_handler)
+    def wrapped(*args, **kwargs):
+        user, error_response = authenticate_request()
+        if error_response:
+            return error_response
+        g.current_user = user
+        return route_handler(*args, **kwargs)
+
+    return wrapped
+
+
+def log_audit_event(
+    event_type,
+    description,
+    *,
+    user_id=None,
+    entity_type=None,
+    entity_id=None,
+    metadata=None,
+):
+    try:
+        execute_write(
+            '''
+            INSERT INTO audit_logs
+                (user_id, event_type, entity_type, entity_id, description, metadata, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''',
+            (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                description,
+                Json(metadata or {}),
+                get_request_ip(),
+                request.headers.get('User-Agent', ''),
+            ),
+        )
+    except Exception as exc:
+        print(f"Audit log error [{event_type}]: {exc}")
 
 
 def normalize_density_to_kg_per_liter(value):
@@ -151,6 +310,14 @@ def signup():
             (email, hashed_password),
             fetch_one_row=True,
         )
+        log_audit_event(
+            'auth.signup',
+            f'User account created for {email}',
+            user_id=user['id'],
+            entity_type='user',
+            entity_id=user['id'],
+            metadata={"email": email},
+        )
         return jsonify({"success": True, "message": "User created successfully", "user": user})
     except Exception as e:
         return jsonify({"error": "Failed to create user", "details": str(e)}), 500
@@ -169,19 +336,59 @@ def login():
         )
 
         if not user:
+            log_audit_event(
+                'auth.login_failed',
+                f'Login failed for {email or "unknown email"}',
+                entity_type='user',
+                metadata={"email": email, "reason": "user_not_found"},
+            )
             return jsonify({"error": "Invalid email or password"}), 401
 
         if check_password_hash(user.get('password', ''), password):
-            return jsonify({"success": True, "user": {"id": user['id'], "email": user['email']}})
+            auth_user = {"id": user['id'], "email": user['email']}
+            log_audit_event(
+                'auth.login_success',
+                f'User logged in: {user["email"]}',
+                user_id=user['id'],
+                entity_type='user',
+                entity_id=user['id'],
+                metadata={"email": user['email']},
+            )
+            return jsonify({
+                "success": True,
+                "user": auth_user,
+                "token": create_auth_token(auth_user),
+            })
 
+        log_audit_event(
+            'auth.login_failed',
+            f'Login failed for {email}',
+            entity_type='user',
+            metadata={"email": email, "reason": "invalid_password"},
+        )
         return jsonify({"error": "Invalid email or password"}), 401
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/logout', methods=['POST'])
+@require_auth
+def logout():
+    log_audit_event(
+        'auth.logout',
+        f'User logged out: {g.current_user["email"]}',
+        user_id=g.current_user['id'],
+        entity_type='user',
+        entity_id=g.current_user['id'],
+        metadata={"email": g.current_user['email']},
+    )
+    return jsonify({"success": True})
+
+
 # PLANTS / SECTIONS
 
 @app.route('/api/plants', methods=['GET'])
+@require_auth
 def get_plants():
     try:
         rows = fetch_all(
@@ -192,12 +399,20 @@ def get_plants():
             '''
         )
         plants = [row['plant_name'] for row in rows if row.get('plant_name')]
+        log_audit_event(
+            'plants.list_viewed',
+            'User fetched plant list',
+            user_id=g.current_user['id'],
+            entity_type='plant',
+            metadata={"plant_count": len(plants)},
+        )
         return jsonify(plants)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/sections/<plant_name>', methods=['GET'])
+@require_auth
 def get_sections(plant_name):
     try:
         rows = fetch_all(
@@ -211,20 +426,30 @@ def get_sections(plant_name):
         )
         for row in rows:
             row['density'] = normalize_density_to_kg_per_liter(row.get('density'))
+        log_audit_event(
+            'sections.viewed',
+            f'User viewed sections for plant {plant_name}',
+            user_id=g.current_user['id'],
+            entity_type='plant',
+            entity_id=plant_name,
+            metadata={"plant_name": plant_name, "section_count": len(rows)},
+        )
         return jsonify(serialize_datetimes(rows))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/contractor', methods=['POST'])
+@require_auth
 def save_contractor():
     data = request.json or {}
     try:
-        execute_write(
+        row = execute_write(
             '''
             INSERT INTO contractor_data
                 (plant_name, section, material, length, width, pit_depth, density)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, plant_name, section, material
             ''',
             (
                 data['plantName'],
@@ -235,6 +460,19 @@ def save_contractor():
                 float(data['pitDepth']),
                 normalize_density_to_kg_per_liter(data.get('density', KG_PER_LITER_DEFAULT)),
             ),
+            fetch_one_row=True,
+        )
+        log_audit_event(
+            'site.created',
+            f'Section {row["section"]} created under plant {row["plant_name"]}',
+            user_id=g.current_user['id'],
+            entity_type='contractor_data',
+            entity_id=row['id'],
+            metadata={
+                "plant_name": row['plant_name'],
+                "section": row['section'],
+                "material": row['material'],
+            },
         )
         return jsonify({"success": True})
     except Exception as e:
@@ -244,6 +482,7 @@ def save_contractor():
 # IMAGE PROCESSING
 
 @app.route('/api/process-image', methods=['POST'])
+@require_auth
 def process_image_api():
     data = request.json or {}
     image_b64 = data.get('image', '').split(',')[-1]
@@ -301,6 +540,21 @@ def process_image_api():
     overlay = img.copy()
     overlay[final_mask == 0] = (overlay[final_mask == 0] * 0.3).astype(np.uint8)
 
+    log_audit_event(
+        'scan.image_processed',
+        'User processed an image for volumetric analysis',
+        user_id=g.current_user['id'],
+        entity_type='section',
+        entity_id=data.get('section_id'),
+        metadata={
+            "section_id": data.get('section_id'),
+            "material": data.get('material'),
+            "frontal_area": float(f"{frontal_area:.2f}"),
+            "volume": float(f"{volume:.2f}"),
+            "weight_ton": float(f"{(weight_kg / 1000.0):.2f}"),
+        },
+    )
+
     return jsonify({
         "grayscale": encode_image(gray),
         "blur": encode_image(cv2.cvtColor(blur, cv2.COLOR_BGR2RGB)),
@@ -329,6 +583,7 @@ else:
 
 
 @app.route('/api/detect-gate-material', methods=['POST'])
+@require_auth
 def detect_gate_material():
     if not gate_model:
         return jsonify({"error": "Gate model not loaded on server."}), 500
@@ -355,6 +610,17 @@ def detect_gate_material():
                 "confidence": float(f"{(conf * 100):.2f}")
             })
 
+        log_audit_event(
+            'gate.material_detected',
+            'User ran gate material detection',
+            user_id=g.current_user['id'],
+            entity_type='gate_scan',
+            metadata={
+                "detections": detections,
+                "detection_count": len(detections),
+            },
+        )
+
         return jsonify({
             "success": True,
             "image_with_bboxes": encode_image(plotted_img),
@@ -368,17 +634,19 @@ def detect_gate_material():
 # LOGS
 
 @app.route('/api/user', methods=['POST'])
+@require_auth
 def save_log():
     data = request.json or {}
     try:
         if not data.get('section_id'):
             return jsonify({"error": "Missing section_id"}), 400
 
-        execute_write(
+        row = execute_write(
             '''
             INSERT INTO volume_logs
                 (section_id, volume, weight_ton, frontal_area, img_original, img_grayscale, img_blur, img_mask)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, section_id, volume, weight_ton, frontal_area, timestamp
             ''',
             (
                 int(data['section_id']),
@@ -390,6 +658,21 @@ def save_log():
                 data.get('img_blur', ''),
                 data.get('img_mask', ''),
             ),
+            fetch_one_row=True,
+        )
+        log_audit_event(
+            'scan.saved',
+            f'Scan saved for section {row["section_id"]}',
+            user_id=g.current_user['id'],
+            entity_type='volume_log',
+            entity_id=row['id'],
+            metadata={
+                "section_id": row['section_id'],
+                "volume": row['volume'],
+                "weight_ton": row['weight_ton'],
+                "frontal_area": row['frontal_area'],
+                "timestamp": row['timestamp'].isoformat() if row.get('timestamp') else None,
+            },
         )
         return jsonify({"success": True})
     except Exception as e:
@@ -398,6 +681,7 @@ def save_log():
 
 
 @app.route('/api/stats/<section_id>', methods=['GET'])
+@require_auth
 def get_stats(section_id):
     try:
         rows = fetch_all(
@@ -410,12 +694,21 @@ def get_stats(section_id):
             ''',
             (int(section_id),),
         )
+        log_audit_event(
+            'scan.history_viewed',
+            f'User viewed scan history for section {section_id}',
+            user_id=g.current_user['id'],
+            entity_type='section',
+            entity_id=int(section_id),
+            metadata={"section_id": int(section_id), "result_count": len(rows)},
+        )
         return jsonify(serialize_datetimes(rows))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/scan/<log_id>', methods=['GET'])
+@require_auth
 def get_scan_detail(log_id):
     try:
         row = fetch_one(
@@ -424,6 +717,14 @@ def get_scan_detail(log_id):
         )
         if not row:
             return jsonify({"error": "Scan not found"}), 404
+        log_audit_event(
+            'scan.detail_viewed',
+            f'User viewed scan detail {log_id}',
+            user_id=g.current_user['id'],
+            entity_type='volume_log',
+            entity_id=int(log_id),
+            metadata={"section_id": row.get('section_id')},
+        )
         return jsonify(serialize_datetimes(row))
     except Exception as e:
         print(f"Scan Detail Error: {e}")
@@ -433,6 +734,7 @@ def get_scan_detail(log_id):
 # MATERIAL LIBRARY
 
 @app.route('/api/materials', methods=['GET'])
+@require_auth
 def get_materials():
     try:
         rows = fetch_all(
@@ -441,6 +743,13 @@ def get_materials():
             FROM material_library
             ORDER BY created_at DESC, id DESC
             '''
+        )
+        log_audit_event(
+            'materials.list_viewed',
+            'User viewed material library',
+            user_id=g.current_user['id'],
+            entity_type='material_library',
+            metadata={"material_count": len(rows)},
         )
         return jsonify(serialize_datetimes(rows))
     except Exception:
@@ -453,12 +762,22 @@ def get_materials():
 
 
 @app.route('/api/materials', methods=['POST'])
+@require_auth
 def add_material():
     data = request.json or {}
     try:
-        execute_write(
-            'INSERT INTO material_library (name) VALUES (%s)',
+        row = execute_write(
+            'INSERT INTO material_library (name) VALUES (%s) RETURNING id, name',
             (data['name'],),
+            fetch_one_row=True,
+        )
+        log_audit_event(
+            'materials.created',
+            f'Material added: {row["name"]}',
+            user_id=g.current_user['id'],
+            entity_type='material_library',
+            entity_id=row['id'],
+            metadata={"name": row['name']},
         )
         return jsonify({"success": True})
     except Exception as e:
@@ -468,11 +787,24 @@ def add_material():
 # DATA MANAGEMENT
 
 @app.route('/api/log/<log_id>', methods=['DELETE'])
+@require_auth
 def delete_log(log_id):
     try:
+        existing_log = fetch_one(
+            'SELECT id, section_id, volume, weight_ton FROM volume_logs WHERE id = %s',
+            (int(log_id),),
+        )
         execute_write(
             'DELETE FROM volume_logs WHERE id = %s',
             (int(log_id),),
+        )
+        log_audit_event(
+            'scan.deleted',
+            f'Scan log deleted: {log_id}',
+            user_id=g.current_user['id'],
+            entity_type='volume_log',
+            entity_id=int(log_id),
+            metadata=existing_log or {"log_id": int(log_id)},
         )
         return jsonify({"success": True, "message": "Log deleted"})
     except Exception as e:
@@ -480,6 +812,7 @@ def delete_log(log_id):
 
 
 @app.route('/api/plant-report/<plant_name>', methods=['GET'])
+@require_auth
 def get_plant_report(plant_name):
     try:
         sections = fetch_all(
@@ -510,6 +843,19 @@ def get_plant_report(plant_name):
             (section_ids,),
         )
 
+        log_audit_event(
+            'plant.report_viewed',
+            f'User viewed report for plant {plant_name}',
+            user_id=g.current_user['id'],
+            entity_type='plant',
+            entity_id=plant_name,
+            metadata={
+                "plant_name": plant_name,
+                "section_count": len(sections),
+                "log_count": len(logs),
+            },
+        )
+
         return jsonify({
             "plant": plant_name,
             "sections": sections,
@@ -519,10 +865,51 @@ def get_plant_report(plant_name):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/activity', methods=['POST'])
+@require_auth
+def save_activity():
+    data = request.json or {}
+    event_type = data.get('event_type')
+    description = data.get('description') or 'User activity captured'
+    if not event_type:
+        return jsonify({"error": "Missing event_type"}), 400
+
+    metadata = data.get('metadata') or {}
+    log_audit_event(
+        event_type,
+        description,
+        user_id=g.current_user['id'],
+        entity_type=data.get('entity_type') or 'ui',
+        entity_id=data.get('entity_id'),
+        metadata=metadata,
+    )
+    return jsonify({"success": True})
+
+
+@app.route('/api/activity/heartbeat', methods=['POST'])
+@require_auth
+def save_heartbeat():
+    data = request.json or {}
+    log_audit_event(
+        'user.heartbeat',
+        'User session heartbeat captured',
+        user_id=g.current_user['id'],
+        entity_type='session',
+        metadata={
+            "view": data.get('view'),
+            "plant_name": data.get('plant_name'),
+            "section_id": data.get('section_id'),
+            "section_name": data.get('section_name'),
+        },
+    )
+    return jsonify({"success": True})
+
+
 # STARTUP
 
 def run_app():
     validate_db_config()
+    ensure_audit_table()
     print(f"Backend Server running on http://{APP_HOST}:{APP_PORT}")
     app.run(port=APP_PORT, host=APP_HOST, debug=False, use_reloader=False)
 

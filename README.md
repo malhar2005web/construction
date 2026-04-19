@@ -170,4 +170,5 @@ npx.cmd eas-cli build -p android --profile preview
 - `app.json` no longer hardcodes the production API host.
 - The mobile runtime falls back to `http://127.0.0.1:8000/api` only when no Expo config value is present.
 - Existing Flask-created password hashes remain compatible because the Node API verifies Werkzeug-style `pbkdf2` and `scrypt` hashes.
+- Node audit events are also appended to `backend-node/audit.log` unless `AUDIT_LOG_PATH` overrides the location.
 - Node runtime logs should not be committed; `backend-node/*.log` is ignored.

@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 
 const API_URL = '/api'
+const AUTH_TOKEN_KEY = 'construction_auth_token'
+const AUTH_USER_KEY = 'construction_auth_user'
 
 // --- Components ---
 
@@ -58,10 +60,85 @@ export default function App() {
 
   const showNotify = (message, type = 'info') => setNotification({ message, type })
 
+  const persistSession = (nextUser, token) => {
+    if (token && nextUser) {
+      window.localStorage.setItem(AUTH_TOKEN_KEY, token)
+      window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser))
+      axios.defaults.headers.common.Authorization = `Bearer ${token}`
+      return
+    }
+
+    window.localStorage.removeItem(AUTH_TOKEN_KEY)
+    window.localStorage.removeItem(AUTH_USER_KEY)
+    delete axios.defaults.headers.common.Authorization
+  }
+
+  const trackActivity = async (eventType, description, metadata = {}, extra = {}) => {
+    if (!user) return
+
+    try {
+      await axios.post(`${API_URL}/activity`, {
+        event_type: eventType,
+        description,
+        metadata,
+        ...extra
+      })
+    } catch (err) {
+      // Best-effort audit trail; UI should not block if audit write fails.
+    }
+  }
+
+  useEffect(() => {
+    const storedToken = window.localStorage.getItem(AUTH_TOKEN_KEY)
+    const storedUser = window.localStorage.getItem(AUTH_USER_KEY)
+
+    if (storedToken) {
+      axios.defaults.headers.common.Authorization = `Bearer ${storedToken}`
+    }
+
+    if (!storedUser) return
+
+    try {
+      setUser(JSON.parse(storedUser))
+    } catch (err) {
+      persistSession(null, null)
+    }
+  }, [])
+
   useEffect(() => {
     if (user) setView('home')
     else setView('auth')
   }, [user])
+
+  useEffect(() => {
+    if (!user || view === 'auth') return
+
+    trackActivity(
+      'ui.view_changed',
+      `User opened ${view} view`,
+      {
+        view,
+        plant_name: selectedPlant || null,
+        section_id: selectedSection?.id || null,
+        section_name: selectedSection?.section || null
+      }
+    )
+  }, [user, view])
+
+  useEffect(() => {
+    if (!user) return undefined
+
+    const intervalId = window.setInterval(() => {
+      axios.post(`${API_URL}/activity/heartbeat`, {
+        view,
+        plant_name: selectedPlant || null,
+        section_id: selectedSection?.id || null,
+        section_name: selectedSection?.section || null
+      }).catch(() => {})
+    }, 60000)
+
+    return () => window.clearInterval(intervalId)
+  }, [user, view, selectedPlant, selectedSection])
 
   const fetchPlants = async () => {
     try {
@@ -78,6 +155,7 @@ export default function App() {
     const password = e.target.password.value
     try {
       const res = await axios.post(`${API_URL}/login`, { email, password })
+      persistSession(res.data.user, res.data.token)
       setUser(res.data.user)
       showNotify('Welcome back, ' + email.split('@')[0])
     } catch (err) {
@@ -98,12 +176,20 @@ export default function App() {
     }
   }
 
-  const handleLogout = () => {
-    setUser(null)
-    setView('auth')
-    setSelectedSection(null)
-    setResults(null)
-    setGateResults(null)
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${API_URL}/logout`)
+    } catch (err) {
+      // Ignore logout audit/network failure and clear local session anyway.
+    } finally {
+      persistSession(null, null)
+      setUser(null)
+      setView('auth')
+      setSelectedPlant('')
+      setSelectedSection(null)
+      setResults(null)
+      setGateResults(null)
+    }
   }
 
   // View Transitions
@@ -373,12 +459,28 @@ export default function App() {
                         try {
                           const res = await axios.post(`${API_URL}/process-image`, {
                             image: base64,
+                            section_id: selectedSection.id,
                             material: selectedSection.material,
                             density: selectedSection.density,
                             wall_height: selectedSection.pit_depth,
                             pit_width: selectedSection.width,
                             section_breadth: selectedSection.length
                           })
+                          await trackActivity(
+                            'scan.image_processed',
+                            'User processed an image for volumetric analysis',
+                            {
+                              section_id: selectedSection.id,
+                              material: selectedSection.material,
+                              frontal_area: res.data?.frontal_area,
+                              volume: res.data?.volume,
+                              weight_ton: res.data?.weight_ton
+                            },
+                            {
+                              entity_type: 'section',
+                              entity_id: selectedSection.id
+                            }
+                          )
                           setResults({ ...res.data, original: base64 })
                           showNotify('Processing logic: GrabCut + Slice calculation active')
                         } catch (err) { showNotify('Vision Server error', 'error') }
@@ -493,6 +595,17 @@ export default function App() {
                         setGateResults(null)
                         try {
                           const res = await axios.post(`${API_URL}/detect-gate-material`, { image: base64 })
+                          await trackActivity(
+                            'gate.material_detected',
+                            'User ran gate material detection',
+                            {
+                              detections: res.data?.detections || [],
+                              detection_count: Array.isArray(res.data?.detections) ? res.data.detections.length : 0
+                            },
+                            {
+                              entity_type: 'gate_scan'
+                            }
+                          )
                           setGateResults(res.data)
                           if (!res.data.detections || res.data.detections.length === 0) {
                             showNotify('No distinct material detected', 'info')
@@ -555,11 +668,33 @@ export default function App() {
                 </div>
 
                 <div style={{ marginTop: 40, display: 'flex', gap: 15 }}>
-                  <button className="btn" style={{ flex: 1, height: 50, borderRadius: 15 }} onClick={() => {
+                  <button className="btn" style={{ flex: 1, height: 50, borderRadius: 15 }} onClick={async () => {
+                    await trackActivity(
+                      'gate.entry_approved',
+                      'User approved detected gate entry',
+                      {
+                        detections: gateResults.detections || []
+                      },
+                      {
+                        entity_type: 'gate_scan'
+                      }
+                    )
                     showNotify('Material Dispatch Authorized')
                     setGateResults(null)
                   }}>Approve Entry</button>
-                  <button className="btn btn-secondary" style={{ flex: 1, height: 50, borderRadius: 15, borderColor: '#f43f5e', color: '#f43f5e' }} onClick={() => setGateResults(null)}>Reject Load</button>
+                  <button className="btn btn-secondary" style={{ flex: 1, height: 50, borderRadius: 15, borderColor: '#f43f5e', color: '#f43f5e' }} onClick={async () => {
+                    await trackActivity(
+                      'gate.entry_rejected',
+                      'User rejected detected gate entry',
+                      {
+                        detections: gateResults.detections || []
+                      },
+                      {
+                        entity_type: 'gate_scan'
+                      }
+                    )
+                    setGateResults(null)
+                  }}>Reject Load</button>
                 </div>
               </motion.div>
             )}

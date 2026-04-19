@@ -41,3 +41,23 @@ CREATE TABLE material_library (
   name text not null,
   created_at timestamp with time zone default now()
 );
+
+-- Create Audit Logs Table
+CREATE TABLE audit_logs (
+  id serial primary key,
+  user_id integer references users(id) on delete set null,
+  event_type text not null,
+  entity_type text,
+  entity_id text,
+  description text not null,
+  metadata jsonb not null default '{}'::jsonb,
+  ip_address text,
+  user_agent text,
+  created_at timestamp with time zone default now()
+);
+
+CREATE INDEX idx_audit_logs_user_created_at
+  ON audit_logs (user_id, created_at DESC);
+
+CREATE INDEX idx_audit_logs_event_created_at
+  ON audit_logs (event_type, created_at DESC);

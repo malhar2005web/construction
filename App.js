@@ -120,6 +120,7 @@ export default function App() {
   const [view, setView] = useState('landing');  // landing, auth, home, setup, selectPlant, selectSection, capture, results, materials, gateDetect
   const [pendingAction, setPendingAction] = useState(null); // 'setup' | 'monitor' | 'gateDetect'
   const [user, setUser] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
   const [isSignup, setIsSignup] = useState(false);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -157,10 +158,60 @@ export default function App() {
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-    if (user) {
+    if (user && authToken) {
       fetchMaterials();
     }
-  }, [view, user]);
+  }, [view, user, authToken]);
+
+  useEffect(() => {
+    if (authToken) {
+      axios.defaults.headers.common.Authorization = `Bearer ${authToken}`;
+      return;
+    }
+
+    delete axios.defaults.headers.common.Authorization;
+  }, [authToken]);
+
+  const trackActivity = async (eventType, description, metadata = {}, extra = {}) => {
+    if (!user || !authToken) return;
+
+    try {
+      await axios.post(`${API_URL}/activity`, {
+        event_type: eventType,
+        description,
+        metadata,
+        ...extra,
+      });
+    } catch (_error) {
+      // Audit should be best-effort and must not block the main UX.
+    }
+  };
+
+  useEffect(() => {
+    if (!user || view === 'auth') return;
+
+    trackActivity('ui.view_changed', `User opened ${view} view`, {
+      view,
+      plant_name: selectedPlant || null,
+      section_id: selectedSection?.id || null,
+      section_name: selectedSection?.section || null,
+    });
+  }, [user, view]);
+
+  useEffect(() => {
+    if (!user || !authToken) return undefined;
+
+    const intervalId = setInterval(() => {
+      axios.post(`${API_URL}/activity/heartbeat`, {
+        view,
+        plant_name: selectedPlant || null,
+        section_id: selectedSection?.id || null,
+        section_name: selectedSection?.section || null,
+      }).catch(() => {});
+    }, 60000);
+
+    return () => clearInterval(intervalId);
+  }, [user, authToken, view, selectedPlant, selectedSection]);
 
   const fetchMaterials = async () => {
     try {
@@ -186,7 +237,11 @@ export default function App() {
   };
 
   // After login, complete the pending action
-  const afterLogin = (loggedUser) => {
+  const afterLogin = (loggedUser, token) => {
+    if (token) {
+      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+    }
+    setAuthToken(token || null);
     setUser(loggedUser);
     if (pendingAction === 'setup') setView('setup');
     else if (pendingAction === 'gateDetect') setView('gateDetect');
@@ -219,7 +274,7 @@ export default function App() {
     if (!email || !password) return Alert.alert('Error', 'Please fill all fields');
     try {
       const res = await axios.post(`${API_URL}/login`, { email, password });
-      afterLogin(res.data.user);
+      afterLogin(res.data.user, res.data.token);
     } catch (err) {
       Alert.alert('Login Failed', `${formatApiError(err)}\n\nAPI: ${API_URL}`);
     }
@@ -281,11 +336,22 @@ export default function App() {
     try {
       const res = await axios.post(`${API_URL}/process-image`, {
         image: base64,
+        section_id: selectedSection.id,
         material: selectedSection.material,
         density: selectedSection.density,
         wall_height: selectedSection.pit_depth,
         pit_width: selectedSection.width,
         section_breadth: selectedSection.length,
+      });
+      await trackActivity('scan.image_processed', 'User processed an image for volumetric analysis', {
+        section_id: selectedSection.id,
+        material: selectedSection.material,
+        frontal_area: res.data?.frontal_area,
+        volume: res.data?.volume,
+        weight_ton: res.data?.weight_ton,
+      }, {
+        entity_type: 'section',
+        entity_id: selectedSection.id,
       });
       setResults({ ...res.data, original: base64 });
       setView('results');
@@ -330,6 +396,25 @@ export default function App() {
     setCustomMatName('');
     setShowCustomMaterialForm(false); setShowMaterialPicker(false);
     Alert.alert('✅ Added', `${m.name} added to your library!`);
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (authToken) {
+        await axios.post(`${API_URL}/logout`);
+      }
+    } catch (_error) {
+      // Ignore logout network failure and clear local session.
+    } finally {
+      delete axios.defaults.headers.common.Authorization;
+      setAuthToken(null);
+      setUser(null);
+      setSelectedPlant('');
+      setSelectedSection(null);
+      setResults(null);
+      setHistory([]);
+      setView('landing');
+    }
   };
 
   // ═══════════════════════════════════════════════════╗
@@ -409,7 +494,7 @@ export default function App() {
                 <Text style={{ color: '#64748b', fontSize: 11 }}>SIGNED IN AS</Text>
                 <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '600' }}>{user.email || user}</Text>
               </View>
-              <TouchableOpacity onPress={() => { setUser(null); setView('landing'); }} style={styles.logoutChip}>
+              <TouchableOpacity onPress={handleLogout} style={styles.logoutChip}>
                 <LogOut color="#94a3b8" size={14} />
                 <Text style={{ color: '#94a3b8', fontSize: 12, marginLeft: 6 }}>Sign out</Text>
               </TouchableOpacity>
@@ -964,6 +1049,12 @@ export default function App() {
     setGateResults(null);
     try {
       const res = await axios.post(`${API_URL}/detect-gate-material`, { image: base64 });
+      await trackActivity('gate.material_detected', 'User ran gate material detection', {
+        detections: res.data?.detections || [],
+        detection_count: Array.isArray(res.data?.detections) ? res.data.detections.length : 0,
+      }, {
+        entity_type: 'gate_scan',
+      });
       setGateResults(res.data);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'Detection failed.'); }
     finally { setLoading(false); }
