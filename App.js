@@ -142,6 +142,8 @@ export default function App() {
   const [showCustomMaterialForm, setShowCustomMaterialForm] = useState(false);
   const [customMatName, setCustomMatName] = useState('');
   const [density, setDensity] = useState('1.6'); // standalone density field in kg/L
+  const [gateImage, setGateImage] = useState(null);
+  const [gateResults, setGateResults] = useState(null);
 
   // ── Monitor Data ─────────────────────────────────────────────────────────────
   const [plants, setPlants] = useState([]);
@@ -516,7 +518,7 @@ export default function App() {
           {/* Logo Area */}
           <View style={{ alignItems: 'center', marginBottom: 40 }}>
             <View style={styles.logoBadge}>
-              <Eye color="#8b5cf6" size={36} />
+              {Eye ? <Eye color="#8b5cf6" size={36} /> : null}
             </View>
             <Text style={styles.brandName}>Vision Inventory</Text>
             <Text style={styles.brandTagline}>AI-powered raw material tracking</Text>
@@ -526,52 +528,52 @@ export default function App() {
           <TouchableOpacity style={styles.actionCard} onPress={() => goToAction('setup')} activeOpacity={0.85}>
             <LinearGradient colors={['rgba(79,70,229,0.3)', 'rgba(79,70,229,0.05)']} style={styles.actionCardGrad}>
               <View style={[styles.actionIconBox, { backgroundColor: 'rgba(79,70,229,0.25)' }]}>
-                <Settings color="#818cf8" size={30} />
+                {Settings ? <Settings color="#818cf8" size={30} /> : null}
               </View>
               <View style={{ flex: 1, marginLeft: 16 }}>
                 <Text style={styles.actionTitle}>Setup Infrastructure</Text>
                 <Text style={styles.actionSub}>Configure plants, materials & sections</Text>
               </View>
-              <ChevronRight color="#475569" size={22} />
+              {ChevronRight ? <ChevronRight color="#475569" size={22} /> : null}
             </LinearGradient>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.actionCard} onPress={() => goToAction('monitor')} activeOpacity={0.85}>
             <LinearGradient colors={['rgba(139,92,246,0.3)', 'rgba(139,92,246,0.05)']} style={styles.actionCardGrad}>
               <View style={[styles.actionIconBox, { backgroundColor: 'rgba(139,92,246,0.25)' }]}>
-                <LayoutDashboard color="#a78bfa" size={30} />
+                {LayoutDashboard ? <LayoutDashboard color="#a78bfa" size={30} /> : null}
               </View>
               <View style={{ flex: 1, marginLeft: 16 }}>
                 <Text style={styles.actionTitle}>Live Monitoring</Text>
                 <Text style={styles.actionSub}>View real-time inventory dashboard</Text>
               </View>
-              <ChevronRight color="#475569" size={22} />
+              {ChevronRight ? <ChevronRight color="#475569" size={22} /> : null}
             </LinearGradient>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.actionCard} onPress={() => setView('materials')} activeOpacity={0.85}>
             <LinearGradient colors={['rgba(16,185,129,0.2)', 'rgba(16,185,129,0.03)']} style={styles.actionCardGrad}>
               <View style={[styles.actionIconBox, { backgroundColor: 'rgba(16,185,129,0.2)' }]}>
-                <BookOpen color="#34d399" size={30} />
+                {BookOpen ? <BookOpen color="#34d399" size={30} /> : null}
               </View>
               <View style={{ flex: 1, marginLeft: 16 }}>
                 <Text style={styles.actionTitle}>Material Library</Text>
                 <Text style={styles.actionSub}>Manage material types & densities</Text>
               </View>
-              <ChevronRight color="#475569" size={22} />
+              {ChevronRight ? <ChevronRight color="#475569" size={22} /> : null}
             </LinearGradient>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.actionCard} onPress={() => goToAction('gateDetect')} activeOpacity={0.85}>
             <LinearGradient colors={['rgba(236,72,153,0.2)', 'rgba(236,72,153,0.03)']} style={styles.actionCardGrad}>
               <View style={[styles.actionIconBox, { backgroundColor: 'rgba(236,72,153,0.2)' }]}>
-                <Package color="#f472b6" size={30} />
+                {Package ? <Package color="#f472b6" size={30} /> : null}
               </View>
               <View style={{ flex: 1, marginLeft: 16 }}>
                 <Text style={styles.actionTitle}>Gate Material Detect</Text>
                 <Text style={styles.actionSub}>Inspect truck materials via AI</Text>
               </View>
-              <ChevronRight color="#475569" size={22} />
+              {ChevronRight ? <ChevronRight color="#475569" size={22} /> : null}
             </LinearGradient>
           </TouchableOpacity>
 
@@ -579,10 +581,12 @@ export default function App() {
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, paddingHorizontal: 4 }}>
               <View>
                 <Text style={{ color: '#64748b', fontSize: 11 }}>SIGNED IN AS</Text>
-                <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '600' }}>{user.email || user}</Text>
+                <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '600' }}>
+                  {typeof user === 'object' ? (user?.email || 'Authorized User') : String(user)}
+                </Text>
               </View>
               <TouchableOpacity onPress={handleLogout} style={styles.logoutChip}>
-                <LogOut color="#94a3b8" size={14} />
+                {LogOut ? <LogOut color="#94a3b8" size={14} /> : null}
                 <Text style={{ color: '#94a3b8', fontSize: 12, marginLeft: 6 }}>Sign out</Text>
               </TouchableOpacity>
             </View>
@@ -595,21 +599,16 @@ export default function App() {
   // ── 2. AUTH ──────────────────────────────────────────────────────────────────
   function renderAuth() {
     return (
-    <LinearGradient colors={['#0a0a1a', '#1a1040', '#0f172a']} style={styles.container}>
-      <SafeAreaView style={{ flex: 1, width: '100%', justifyContent: 'center' }}>
-        <ScrollView contentContainerStyle={{ alignItems: 'center', paddingVertical: 40 }}>
+    <View style={[styles.container, { backgroundColor: '#1a1a2e', padding: 20, justifyContent: 'center' }]}>
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1 }}>
           <View style={styles.glassCard}>
-            <View style={styles.iconContainer}><Database color="#8b5cf6" size={38} /></View>
             <Text style={styles.title}>{isSignup ? 'Create Account' : 'Welcome Back'}</Text>
             <Text style={styles.subtitle}>Plant Management System</Text>
-            <Text style={[styles.toggleText, { marginBottom: 18, textAlign: 'center', fontSize: 11 }]}>
-              API: {API_URL}
-            </Text>
-
+            
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={styles.inputWrapper}>
-                <Mail color="#64748b" size={18} style={{ marginRight: 10 }} />
                 <TextInput style={styles.input} placeholder="name@company.com" placeholderTextColor="#374151" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
               </View>
             </View>
@@ -617,14 +616,12 @@ export default function App() {
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.inputWrapper}>
-                <Lock color="#64748b" size={18} style={{ marginRight: 10 }} />
                 <TextInput style={styles.input} placeholder="••••••••" placeholderTextColor="#374151" value={password} onChangeText={setPassword} secureTextEntry />
               </View>
             </View>
 
             <TouchableOpacity style={styles.primaryButton} onPress={isSignup ? handleSignup : handleLogin}>
               <Text style={styles.buttonText}>{isSignup ? 'Register' : 'Sign In'}</Text>
-              <ChevronRight color="white" size={20} />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={() => setIsSignup(!isSignup)} style={{ marginTop: 20 }}>
@@ -634,9 +631,10 @@ export default function App() {
               </Text>
             </TouchableOpacity>
           </View>
+          <Text style={{ color: 'rgba(255,255,255,0.1)', fontSize: 10, marginTop: 20 }}>v1.0.5-dev | Auth</Text>
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
     );
   }
 
@@ -1126,8 +1124,7 @@ export default function App() {
   );
 
   // ── 10. GATE MATERIAL DETECTION ───────────────────────────────────────────────
-  const [gateImage, setGateImage] = useState(null);
-  const [gateResults, setGateResults] = useState(null);
+
 
   const processGateImage = async (base64) => {
     setLoading(true);
@@ -1248,20 +1245,30 @@ export default function App() {
     </LinearGradient>
   );
 
-  // ═══════════════════════════════════════════════ ROUTER
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#1a1a2e' }}>
+        <StatusBar barStyle="light-content" />
+        {renderAuth()}
+      </View>
+    );
+  }
+
   return (
-    <>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {view === 'home' && renderLanding()}
-      {view === 'setup' && renderSetup()}
-      {view === 'selectPlant' && renderSelectPlant()}
-      {view === 'selectSection' && renderSelectSection()}
-      {view === 'capture' && renderCapture()}
-      {view === 'results' && renderResults()}
-      {view === 'scanDetail' && renderScanDetail()}
-      {view === 'materials' && renderMaterials()}
-      {view === 'gateDetect' && renderGateDetect()}
-    </>
+    <View style={{ flex: 1, backgroundColor: '#0a0a1a' }}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <View style={{ flex: 1 }}>
+        {view === 'home' && renderLanding()}
+        {view === 'setup' && renderSetup()}
+        {view === 'selectPlant' && renderSelectPlant()}
+        {view === 'selectSection' && renderSelectSection()}
+        {view === 'capture' && renderCapture()}
+        {view === 'results' && renderResults()}
+        {view === 'scanDetail' && renderScanDetail()}
+        {view === 'materials' && renderMaterials()}
+        {view === 'gateDetect' && renderGateDetect()}
+      </View>
+    </View>
   );
 }
 
@@ -1269,7 +1276,7 @@ export default function App() {
 //  STYLES
 // ═══════════════════════════════════════════════════════════════════════════════
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: '#0a0a1a' },
 
   // Landing
   logoBadge: { width: 80, height: 80, borderRadius: 24, backgroundColor: 'rgba(139,92,246,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)' },
