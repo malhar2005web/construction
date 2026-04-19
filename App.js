@@ -43,6 +43,7 @@ const getBaseUrl = () => {
   return DEFAULT_DEV_API_URL;
 };
 const API_URL = getBaseUrl();
+const SESSION_FILE_PATH = `${FileSystem.documentDirectory}construction-session.json`;
 
 const formatApiError = (err) => {
   const backendError = err?.response?.data?.error;
@@ -117,11 +118,11 @@ const PlantRow = ({ name, count, onPress }) => (
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   // ── Navigation ──────────────────────────────────────────────────────────────
-  const [view, setView] = useState('landing');  // landing, auth, home, setup, selectPlant, selectSection, capture, results, materials, gateDetect
-  const [pendingAction, setPendingAction] = useState(null); // 'setup' | 'monitor' | 'gateDetect'
+  const [view, setView] = useState('home');  // home, setup, selectPlant, selectSection, capture, results, materials, gateDetect
   const [user, setUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [isSignup, setIsSignup] = useState(false);
+  const [isSessionReady, setIsSessionReady] = useState(false);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const [email, setEmail] = useState('');
@@ -156,12 +157,91 @@ export default function App() {
   // ── Animation ────────────────────────────────────────────────────────────────
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
+  const persistSession = async (nextUser, token) => {
+    try {
+      if (Platform.OS === 'web') {
+        if (token && nextUser) {
+          window.localStorage.setItem('construction_auth_token', token);
+          window.localStorage.setItem('construction_auth_user', JSON.stringify(nextUser));
+          return;
+        }
+
+        window.localStorage.removeItem('construction_auth_token');
+        window.localStorage.removeItem('construction_auth_user');
+        return;
+      }
+
+      if (token && nextUser) {
+        await FileSystem.writeAsStringAsync(
+          SESSION_FILE_PATH,
+          JSON.stringify({ token, user: nextUser })
+        );
+        return;
+      }
+
+      const fileInfo = await FileSystem.getInfoAsync(SESSION_FILE_PATH);
+      if (fileInfo.exists) {
+        await FileSystem.deleteAsync(SESSION_FILE_PATH, { idempotent: true });
+      }
+    } catch (_error) {
+      // Session persistence failure should not block app usage.
+    }
+  };
+
+  const restoreSession = async () => {
+    try {
+      let restoredToken = null;
+      let restoredUser = null;
+
+      if (Platform.OS === 'web') {
+        restoredToken = window.localStorage.getItem('construction_auth_token');
+        const storedUser = window.localStorage.getItem('construction_auth_user');
+        restoredUser = storedUser ? JSON.parse(storedUser) : null;
+      } else {
+        const fileInfo = await FileSystem.getInfoAsync(SESSION_FILE_PATH);
+        if (!fileInfo.exists) {
+          return;
+        }
+
+        const storedSession = await FileSystem.readAsStringAsync(SESSION_FILE_PATH);
+        const parsedSession = JSON.parse(storedSession);
+        restoredToken = parsedSession?.token || null;
+        restoredUser = parsedSession?.user || null;
+      }
+
+      if (restoredToken && restoredUser) {
+        axios.defaults.headers.common.Authorization = `Bearer ${restoredToken}`;
+        setAuthToken(restoredToken);
+        setUser(restoredUser);
+      }
+    } catch (_error) {
+      await persistSession(null, null);
+    }
+  };
+
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
     if (user && authToken) {
       fetchMaterials();
     }
   }, [view, user, authToken]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const bootstrapSession = async () => {
+      await restoreSession();
+      if (isMounted) {
+        setIsSessionReady(true);
+      }
+    };
+
+    bootstrapSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (authToken) {
@@ -188,7 +268,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!user || view === 'auth') return;
+    if (!user) return;
 
     trackActivity('ui.view_changed', `User opened ${view} view`, {
       view,
@@ -226,28 +306,19 @@ export default function App() {
 
   // ── Guards ───────────────────────────────────────────────────────────────────
   const goToAction = (action) => {
-    if (user) {
-      if (action === 'setup') { setView('setup'); }
-      else if (action === 'gateDetect') { setView('gateDetect'); }
-      else { fetchPlants(); setView('selectPlant'); }
-    } else {
-      setPendingAction(action);
-      setView('auth');
-    }
+    if (action === 'setup') { setView('setup'); }
+    else if (action === 'gateDetect') { setView('gateDetect'); }
+    else { fetchPlants(); setView('selectPlant'); }
   };
 
-  // After login, complete the pending action
   const afterLogin = (loggedUser, token) => {
     if (token) {
       axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     }
     setAuthToken(token || null);
     setUser(loggedUser);
-    if (pendingAction === 'setup') setView('setup');
-    else if (pendingAction === 'gateDetect') setView('gateDetect');
-    else if (pendingAction === 'monitor') { fetchPlants(); setView('selectPlant'); }
-    else setView('home');
-    setPendingAction(null);
+    persistSession(loggedUser, token || null);
+    setView('home');
   };
 
   // ── API Calls ────────────────────────────────────────────────────────────────
@@ -407,19 +478,35 @@ export default function App() {
       // Ignore logout network failure and clear local session.
     } finally {
       delete axios.defaults.headers.common.Authorization;
+      await persistSession(null, null);
       setAuthToken(null);
       setUser(null);
       setSelectedPlant('');
       setSelectedSection(null);
       setResults(null);
       setHistory([]);
-      setView('landing');
+      setView('home');
     }
   };
 
   // ═══════════════════════════════════════════════════╗
   //  SCREEN RENDERERS                                  ║
   // ═══════════════════════════════════════════════════╝
+
+  if (!isSessionReady) {
+    return (
+      <LinearGradient colors={['#0a0a1a', '#1a1040', '#0f172a']} style={styles.container}>
+        <View style={styles.loaderCard}>
+          <ActivityIndicator size="large" color="#8b5cf6" />
+          <Text style={{ color: 'white', marginTop: 12, fontWeight: '600' }}>Restoring session...</Text>
+        </View>
+      </LinearGradient>
+    );
+  }
+
+  if (!user) {
+    return renderAuth();
+  }
 
   // ── 1. LANDING ───────────────────────────────────────────────────────────────
   const renderLanding = () => (
@@ -506,14 +593,12 @@ export default function App() {
   );
 
   // ── 2. AUTH ──────────────────────────────────────────────────────────────────
-  const renderAuth = () => (
+  function renderAuth() {
+    return (
     <LinearGradient colors={['#0a0a1a', '#1a1040', '#0f172a']} style={styles.container}>
       <SafeAreaView style={{ flex: 1, width: '100%', justifyContent: 'center' }}>
         <ScrollView contentContainerStyle={{ alignItems: 'center', paddingVertical: 40 }}>
           <View style={styles.glassCard}>
-            <TouchableOpacity style={{ alignSelf: 'flex-start', marginBottom: 16 }} onPress={() => { setView('landing'); setPendingAction(null); }}>
-              <ArrowLeft color="#64748b" size={22} />
-            </TouchableOpacity>
             <View style={styles.iconContainer}><Database color="#8b5cf6" size={38} /></View>
             <Text style={styles.title}>{isSignup ? 'Create Account' : 'Welcome Back'}</Text>
             <Text style={styles.subtitle}>Plant Management System</Text>
@@ -552,7 +637,8 @@ export default function App() {
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
-  );
+    );
+  }
 
   // ── 3. SETUP ─────────────────────────────────────────────────────────────────
   const renderSetup = () => (
@@ -560,7 +646,7 @@ export default function App() {
       <SafeAreaView style={{ flex: 1, width: '100%' }}>
         <ScrollView contentContainerStyle={{ padding: 24 }}>
           <View style={styles.screenHeader}>
-            <TouchableOpacity onPress={() => setView('landing')} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
               <ArrowLeft color="white" size={20} />
             </TouchableOpacity>
             <View>
@@ -695,7 +781,7 @@ export default function App() {
       <SafeAreaView style={{ flex: 1, width: '100%' }}>
         <View style={{ padding: 24, flex: 1 }}>
           <View style={styles.screenHeader}>
-            <TouchableOpacity onPress={() => setView('landing')} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
               <ArrowLeft color="white" size={20} />
             </TouchableOpacity>
             <View>
@@ -980,7 +1066,7 @@ export default function App() {
       <SafeAreaView style={{ flex: 1, width: '100%' }}>
         <View style={{ flex: 1, padding: 24 }}>
           <View style={styles.screenHeader}>
-            <TouchableOpacity onPress={() => setView('landing')} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => setView('home')} style={styles.backBtn}>
               <ArrowLeft color="white" size={20} />
             </TouchableOpacity>
             <View>
@@ -1088,7 +1174,7 @@ export default function App() {
       <SafeAreaView style={{ flex: 1, width: '100%' }}>
         <ScrollView contentContainerStyle={{ padding: 24 }}>
           <View style={styles.screenHeader}>
-            <TouchableOpacity onPress={() => { setView('landing'); setGateImage(null); setGateResults(null); }} style={styles.backBtn}>
+            <TouchableOpacity onPress={() => { setView('home'); setGateImage(null); setGateResults(null); }} style={styles.backBtn}>
               <ArrowLeft color="white" size={20} />
             </TouchableOpacity>
             <View>
@@ -1166,8 +1252,6 @@ export default function App() {
   return (
     <>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {view === 'landing' && renderLanding()}
-      {view === 'auth' && renderAuth()}
       {view === 'home' && renderLanding()}
       {view === 'setup' && renderSetup()}
       {view === 'selectPlant' && renderSelectPlant()}
